@@ -28,28 +28,78 @@ def generate_sine_wave(freq, dur, s_rate, waveform):
         return wave
 
 
-def apply_reverb(wave, reverb_amount):
-    delay = int(sample_rate * 0.02)
-    reverb_wave = np.copy(wave)
-    for i in range(delay, len(wave)):
-        reverb_wave[i] += reverb_amount * reverb_wave[i - delay]
-    reverb_wave = reverb_wave / (1 + reverb_amount)
-    return reverb_wave
+def plain_reverberator(input_wave, delay, filter_param):
+    n_data = np.size(input_wave)
+    output_wave = np.zeros(n_data)
+    for n in np.arange(n_data):
+        if n < delay:
+            output_wave[n] = input_wave[n]
+        else:
+            output_wave[n] = input_wave[n] + filter_param * output_wave[n - delay]
+    return output_wave
+
+
+def plain_gain_from_reverb_time(reverb_time, plain_delay, sample_rate):
+    n_delays = np.size(plain_delay)
+    plain_gains = np.zeros(n_delays)
+    for i in np.arange(n_delays):
+        plain_gains[i] = 10**(-3*plain_delay[i]/(reverb_time*sample_rate))
+    return plain_gains
+
+
+def allpass_reverberator(input_wave, delay, ap_param):
+    n_data = np.size(input_wave)
+    output_wave = np.zeros(n_data)
+    for n in np.arange(n_data):
+        if n < delay:
+            output_wave[n] = input_wave[n]
+        else:
+            output_wave[n] = ap_param * input_wave[n] + input_wave[n-delay] - ap_param * output_wave[n-delay]
+    return output_wave
+
+
+def schroeders_reverberator(input_wave, mixing_param, plain_delay, plain_gain, ap_delay, ap_param):
+    n_data = np.size(input_wave)
+    tmp_signal = np.zeros(n_data)
+
+    n_plain_reverberators = np.size(plain_delay)
+    for i in np.arange(n_plain_reverberators):
+        tmp_signal = tmp_signal + mixing_param[i] * plain_reverberator(input_wave, plain_delay[i], plain_gain[i])
+
+    n_ap_reverberators = np.size(ap_delay)
+    for i in np.arange(n_ap_reverberators):
+        tmp_signal = allpass_reverberator(tmp_signal, ap_delay[i], ap_param[i])
+    return tmp_signal
 
 
 def play_sound(freq, waveform):
-    wave = generate_sine_wave(freq, duration, sample_rate, waveform)
+    new_duration = reverb_slider.get() + duration
+    wave = generate_sine_wave(freq, new_duration, sample_rate, waveform)
 
-    reverb = reverb_slider.get() / 100
-    if reverb > 0:
-        wave = apply_reverb(wave, reverb)
+    reverb_time = reverb_slider.get() # This should get the rever time from the slider in the GUI
+    if reverb_slider.get() != 0:
+        mixing_param = np.array([0.3, 0.15, 0.35, 0.2])
+        plain_delays = np.array([300, 500, 700, 900])
+        ap_delays = np.array([200, 300])
+        ap_params = np.array([-0.9, 0.9])
 
-    sd.play(wave, sample_rate)
-    sd.wait()
+        plain_gains = plain_gain_from_reverb_time(reverb_time, plain_delays, sample_rate)
+
+    #ir_length = int(np.floor(reverb_time * sample_rate)) # Impulse response length
+    #impulse = np.r_[np.array([1]), np.zeros(ir_length-1)]
+    #impulse_response = schroeppel_reverberator(impulse, mixing_param, plain_delays, plain_gains, ap_delays, ap_params)
+
+        reverbed_wave = schroeders_reverberator(wave, mixing_param, plain_delays, plain_gains, ap_delays, ap_params)
+
+        sd.play(reverbed_wave, sample_rate)
+        sd.wait()
+    elif reverb_slider.get() == 0:
+        sd.play(wave, sample_rate)
+        sd.wait()
 
 
 root = tk.Tk()
-root.geometry('800x400')
+root.geometry('300x400')
 root.title("JakobSynth")
 
 #Different frames to seperate things :)
@@ -59,7 +109,7 @@ bottom_frame = tk.Frame(root)
 bottom_frame.pack(side="bottom")
 
 #The sliders are in the top of the GUI
-reverb_slider = tk.Scale(top_frame, from_=0, to=100, orient="horizontal", label="Reverb")
+reverb_slider = tk.Scale(top_frame, from_=0, to=0.4, resolution=0.1, orient="horizontal", label="Reverb Time")
 reverb_slider.pack()
 
 strings = tk.StringVar()
